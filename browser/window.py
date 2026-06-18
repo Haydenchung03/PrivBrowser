@@ -2,14 +2,18 @@ from PyQt6.QtCore import QUrl
 from PyQt6.QtWidgets import (
     QMainWindow,
     QToolBar,
-    QLineEdit
+    QLineEdit,
+    QVBoxLayout,
+    QWidget,
+    QMessageBox
 )
 
 from PyQt6.QtGui import QAction
-
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 
-from .settings import create_private_profile
+from .intent_dialog import IntentDialog
+from .activity_bar import ActivityBar
+from .session_manager import SessionManager
 
 
 class BrowserWindow(QMainWindow):
@@ -17,70 +21,112 @@ class BrowserWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        self.setWindowTitle("Privacy Browser")
+        self.session = SessionManager()
+        self.session.session_ended.connect(self.on_session_end)
 
+        self.start_session()
+
+        self.setWindowTitle("Privacy Browser")
         self.resize(1200, 800)
 
-        profile = create_private_profile()
-
         self.browser = QWebEngineView()
+        self.browser.setUrl(QUrl("https://duckduckgo.com"))
 
-        self.browser.setUrl(
-            QUrl("https://duckduckgo.com")
-        )
+        self.activity_bar = ActivityBar(self.session)
 
-        self.setCentralWidget(self.browser)
+        container = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        layout.addWidget(self.activity_bar)
+        layout.addWidget(self.browser)
+
+        container.setLayout(layout)
+        self.setCentralWidget(container)
 
         toolbar = QToolBar()
         self.addToolBar(toolbar)
 
         back_btn = QAction("←", self)
-        back_btn.triggered.connect(
-            self.browser.back
-        )
+        back_btn.triggered.connect(self.browser.back)
         toolbar.addAction(back_btn)
 
         forward_btn = QAction("→", self)
-        forward_btn.triggered.connect(
-            self.browser.forward
-        )
+        forward_btn.triggered.connect(self.browser.forward)
         toolbar.addAction(forward_btn)
 
         reload_btn = QAction("⟳", self)
-        reload_btn.triggered.connect(
-            self.browser.reload
-        )
+        reload_btn.triggered.connect(self.browser.reload)
         toolbar.addAction(reload_btn)
 
         home_btn = QAction("Home", self)
         home_btn.triggered.connect(
-            self.go_home
+            lambda: self.browser.setUrl(QUrl("https://duckduckgo.com"))
         )
         toolbar.addAction(home_btn)
 
         self.url_bar = QLineEdit()
-
-        self.url_bar.returnPressed.connect(
-            self.navigate
-        )
-
+        self.url_bar.returnPressed.connect(self.navigate)
         toolbar.addWidget(self.url_bar)
 
-        self.browser.urlChanged.connect(
-            self.update_url
+        self.browser.urlChanged.connect(self.update_url)
+
+    # -------------------------
+    # Session handling
+    # -------------------------
+
+    def start_session(self):
+
+        dialog = IntentDialog()
+
+        if dialog.exec():
+
+            self.session.start_session(
+                dialog.intent,
+                dialog.hours,
+                dialog.minutes
+            )
+        else:
+            self.session.start_session("Other", 0, 30)
+
+    def on_session_end(self):
+
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Session Complete")
+
+        msg.setText(
+            f"Time's up for: {self.session.intent}"
         )
 
-    def go_home(self):
-        self.browser.setUrl(
-            QUrl("https://duckduckgo.com")
+        new_task_btn = msg.addButton(
+            "New Task",
+            QMessageBox.ButtonRole.AcceptRole
         )
+
+        end_btn = msg.addButton(
+            "End Session",
+            QMessageBox.ButtonRole.RejectRole
+        )
+
+        msg.exec()
+
+        if msg.clickedButton() == end_btn:
+            self.close()
+
+        else:
+            self.session.reset()
+            self.start_session()
+
+    # -------------------------
+    # Browser
+    # -------------------------
 
     def navigate(self):
+
         url = self.url_bar.text().strip()
 
-        if not url.startswith(
-            ("http://", "https://")
-        ):
+        if not url.startswith(("http://", "https://")):
             url = "https://" + url
 
         self.browser.setUrl(QUrl(url))
